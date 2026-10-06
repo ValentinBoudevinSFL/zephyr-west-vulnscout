@@ -10,6 +10,11 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --serve
 ```
 
+In direct mode, VulnScout data is persisted on the host by mounting
+`<build-dir>/../.vulnscout/cache` to `/cache/vulnscout` in the container. For
+example with `-d demo/mbedtls_sbom/build`, the database is stored at
+`demo/mbedtls_sbom/.vulnscout/cache/vulnscout.db`.
+
 If SPDX files already exist and you only want to import them:
 
 ```sh
@@ -52,6 +57,8 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
 
 `--vulnscout-image` is interpreted as `repo[:tag]`. If the tag is omitted,
 the command uses `VULNSCOUT_VERSION` (or `VULNSCOT_VERSION`).
+
+Use `--vulnscout-data-dir /path/to/data` to override the default data location.
 
 The command generates SPDX 3.1 SBOM files with west spdx and then imports all
 matching files from the SPDX output directory:

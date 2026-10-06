@@ -30,7 +30,9 @@ Generate SPDX SBOM files using west spdx, then import them into VulnScout.
 
 By default this command runs `west spdx --spdx-version 3.0`, then imports all
 `*.jsonld` files from the SPDX output directory into VulnScout using
-`--add-spdx` via `docker exec` or `podman exec`."""
+`--add-spdx` via `docker exec` or `podman exec`. In direct mode it mounts
+`<build-dir>/../.vulnscout/cache` to `/cache/vulnscout` for persistent database
+storage."""
 
 
 class ZephyrVulnScout(WestCommand):
@@ -148,6 +150,13 @@ class ZephyrVulnScout(WestCommand):
             help='VulnScout container name for direct exec mode (default: vulnscout)',
         )
         parser.add_argument(
+            '--vulnscout-data-dir',
+            help=(
+                'host directory mounted to /cache/vulnscout in direct mode '
+                '(default: <build-dir>/../.vulnscout/cache)'
+            ),
+        )
+        parser.add_argument(
             '--serve',
             action='store_true',
             help='pass --serve to VulnScout',
@@ -203,8 +212,10 @@ class ZephyrVulnScout(WestCommand):
                 f'Expected *.jsonld, *.spdx.json, or *.spdx files.'
             )
 
+        data_dir = self._resolve_vulnscout_data_dir(args, build_dir)
+
         try:
-            self._run_vulnscout(args, spdx_files)
+            self._run_vulnscout(args, spdx_files, data_dir)
         except KeyboardInterrupt:
             if args.serve and not args.vulnscout_cmd:
                 self.wrn('Interrupted by user; stopping VulnScout container')
@@ -273,6 +284,11 @@ class ZephyrVulnScout(WestCommand):
         repo, version = self._resolve_vulnscout_repo_and_version(args)
         return f'{repo}:{version}'
 
+    def _resolve_vulnscout_data_dir(self, args, build_dir):
+        if args.vulnscout_data_dir:
+            return os.path.abspath(args.vulnscout_data_dir)
+        return os.path.abspath(os.path.join(build_dir, '..', '.vulnscout', 'cache'))
+
     def _resolve_vulnscout_repo_and_version(self, args):
         repo = VULNSCOUT_IMAGE_REPO
         version = VULNSCOUT_VERSION
@@ -302,11 +318,49 @@ class ZephyrVulnScout(WestCommand):
         env['VULNSCOT_VERSION'] = version
         env['VULNSCOUT_IMAGE'] = f'{repo}:{version}'
 
-    def _ensure_container_running(self, engine, container_name, args):
+    def _get_container_data_mount(self, engine, container_name):
+        inspect_cmd = [
+            engine,
+            'inspect',
+            '--format',
+            '{{range .Mounts}}{{if eq .Destination "/cache/vulnscout"}}{{.Source}}{{end}}{{end}}',
+            container_name,
+        ]
+        try:
+            output = subprocess.run(inspect_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            self.die(f'Failed to inspect container "{container_name}": exit code {e.returncode}')
+        return output.stdout.strip()
+
+    def _ensure_container_running(self, engine, container_name, args, data_dir):
         if self._is_container_running(engine, container_name):
+            current_mount = self._get_container_data_mount(engine, container_name)
+            if not current_mount:
+                self.wrn(
+                    f'Container "{container_name}" has no /cache/vulnscout host mount; '
+                    'database is not persistent. '
+                    f'Expected mount source: {data_dir}'
+                )
+            elif os.path.abspath(current_mount) != data_dir:
+                self.wrn(
+                    f'Container "{container_name}" uses /cache/vulnscout from {current_mount} '
+                    f'instead of requested {data_dir}'
+                )
             return
 
         if self._is_container_present(engine, container_name):
+            current_mount = self._get_container_data_mount(engine, container_name)
+            if not current_mount:
+                self.wrn(
+                    f'Existing container "{container_name}" has no /cache/vulnscout host mount; '
+                    'database is not persistent. '
+                    f'Expected mount source: {data_dir}'
+                )
+            elif os.path.abspath(current_mount) != data_dir:
+                self.wrn(
+                    f'Existing container "{container_name}" uses /cache/vulnscout from {current_mount} '
+                    f'instead of requested {data_dir}'
+                )
             start_cmd = [engine, 'start', container_name]
             self.inf(f'Starting existing VulnScout container: {quote_sh_list(start_cmd)}')
             try:
@@ -316,6 +370,7 @@ class ZephyrVulnScout(WestCommand):
             self._wait_for_container_ready(engine, container_name)
             return
 
+        os.makedirs(data_dir, exist_ok=True)
         image = self._resolve_vulnscout_image(args)
         run_cmd = [
             engine,
@@ -325,6 +380,8 @@ class ZephyrVulnScout(WestCommand):
             container_name,
             '-p',
             '7275:7275',
+            '-v',
+            f'{data_dir}:/cache/vulnscout',
             image,
             'daemon',
         ]
@@ -487,7 +544,7 @@ class ZephyrVulnScout(WestCommand):
         resolved = sorted(set(os.path.abspath(p) for p in resolved if os.path.isfile(p)))
         return resolved
 
-    def _run_vulnscout(self, args, spdx_files):
+    def _run_vulnscout(self, args, spdx_files, data_dir):
         if args.dev and not args.vulnscout_cmd:
             self.die(
                 '--dev is only supported with --vulnscout-cmd (wrapper mode). '
@@ -506,7 +563,7 @@ class ZephyrVulnScout(WestCommand):
                 vulnscout_args.extend(['--add-spdx', spdx_file])
         else:
             engine = self._resolve_container_engine(args.container_engine)
-            self._ensure_container_running(engine, args.container_name, args)
+            self._ensure_container_running(engine, args.container_name, args, data_dir)
             self._cleanup_staged_inputs(engine, args.container_name)
             staged_files = self._stage_spdx_files(engine, args.container_name, spdx_files)
             for spdx_file in staged_files:
