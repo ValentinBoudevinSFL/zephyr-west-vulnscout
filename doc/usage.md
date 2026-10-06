@@ -7,9 +7,7 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   -d demo/mbedtls_sbom/build \
   --project default \
   --variant zephyr_demo \
-  --vulnscout-cmd /home/vboudevin/Documents/vs/vulnscout/vulnscout \
-  --vulnscout-image sfl:custom \
-  --serve --dev
+  --serve
 ```
 
 If SPDX files already exist and you only want to import them:
@@ -18,6 +16,16 @@ If SPDX files already exist and you only want to import them:
 ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   -d demo/mbedtls_sbom/build \
   --no-generate \
+  --project default \
+  --variant zephyr_demo \
+  --serve
+```
+
+Optional wrapper mode (instead of direct container exec):
+
+```sh
+ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
+  -d demo/mbedtls_sbom/build \
   --project default \
   --variant zephyr_demo \
   --vulnscout-cmd /home/vboudevin/Documents/vs/vulnscout/vulnscout \

@@ -6,10 +6,11 @@ into VulnScout for vulnerability analysis.
 ## What it provides
 
 - `west vulnscout`
-  - Generates SPDX 3.1 SBOM files via `west spdx`
+  - Generates SPDX SBOM files via `west spdx` (default: SPDX 3.0)
   - Imports SBOM files into VulnScout using `--add-spdx`
+  - Uses direct `docker exec`/`podman exec` by default
   - Supports optional VulnScout flags like `--serve` and `--dev`
-  - Supports custom VulnScout image via `--vulnscout-image`
+  - Supports optional wrapper mode via `--vulnscout-cmd`
 
 ## Repository layout
 
@@ -47,9 +48,7 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   -d demo/mbedtls_sbom/build \
   --project default \
   --variant zephyr_demo \
-  --vulnscout-cmd /home/vboudevin/Documents/vs/vulnscout/vulnscout \
-  --vulnscout-image sfl:custom \
-  --serve --dev
+  --serve
 ```
 
 If SPDX files already exist and you only want to import them:
@@ -58,6 +57,17 @@ If SPDX files already exist and you only want to import them:
 ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   -d demo/mbedtls_sbom/build \
   --no-generate \
+  --project default \
+  --variant zephyr_demo \
+  --serve
+```
+
+If you prefer using the VulnScout wrapper script instead of direct container
+exec mode:
+
+```sh
+ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
+  -d demo/mbedtls_sbom/build \
   --project default \
   --variant zephyr_demo \
   --vulnscout-cmd /home/vboudevin/Documents/vs/vulnscout/vulnscout \
