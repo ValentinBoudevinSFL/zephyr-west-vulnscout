@@ -50,6 +50,9 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --serve --dev
 ```
 
+`--vulnscout-image` is interpreted as `repo[:tag]`. If the tag is omitted,
+the command uses `VULNSCOUT_VERSION` (or `VULNSCOT_VERSION`).
+
 The command generates SPDX 3.1 SBOM files with west spdx and then imports all
 matching files from the SPDX output directory:
 

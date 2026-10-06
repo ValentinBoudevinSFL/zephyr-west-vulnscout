@@ -131,8 +131,8 @@ class ZephyrVulnScout(WestCommand):
         parser.add_argument(
             '--vulnscout-image',
             help=(
-                'container image override for direct mode startup and value '
-                'exported as VULNSCOUT_IMAGE in wrapper mode '
+                'container image repository or repository:tag override '
+                '(when tag is omitted, VULNSCOUT_VERSION is used) '
                 f'(default: {DEFAULT_VULNSCOUT_IMAGE})'
             ),
         )
@@ -270,9 +270,37 @@ class ZephyrVulnScout(WestCommand):
         )
 
     def _resolve_vulnscout_image(self, args):
-        if args.vulnscout_image:
-            return args.vulnscout_image
-        return os.environ.get('VULNSCOUT_IMAGE', DEFAULT_VULNSCOUT_IMAGE)
+        repo, version = self._resolve_vulnscout_repo_and_version(args)
+        return f'{repo}:{version}'
+
+    def _resolve_vulnscout_repo_and_version(self, args):
+        repo = VULNSCOUT_IMAGE_REPO
+        version = VULNSCOUT_VERSION
+
+        if not args.vulnscout_image:
+            return repo, version
+
+        override = args.vulnscout_image.strip()
+        if not override:
+            return repo, version
+
+        # Tag separator is ':' after the last '/'.
+        last_slash = override.rfind('/')
+        last_colon = override.rfind(':')
+        if last_colon > last_slash:
+            image_repo, image_tag = override.rsplit(':', 1)
+            if image_repo and image_tag:
+                return image_repo, image_tag
+
+        return override, version
+
+    def _set_vulnscout_image_env(self, env, args):
+        repo, version = self._resolve_vulnscout_repo_and_version(args)
+        env['VULNSCOUT_IMAGE_REPO'] = repo
+        env['VULNSCOUT_VERSION'] = version
+        # Keep compatibility with wrapper scripts still reading this typo.
+        env['VULNSCOT_VERSION'] = version
+        env['VULNSCOUT_IMAGE'] = f'{repo}:{version}'
 
     def _ensure_container_running(self, engine, container_name, args):
         if self._is_container_running(engine, container_name):
@@ -344,10 +372,7 @@ class ZephyrVulnScout(WestCommand):
             stop_cmd = [args.vulnscout_cmd, '--stop']
             self.inf(f'Stopping VulnScout container with wrapper: {quote_sh_list(stop_cmd)}')
             env = os.environ.copy()
-            if args.vulnscout_image:
-                env['VULNSCOUT_IMAGE'] = args.vulnscout_image
-            elif 'VULNSCOUT_IMAGE' not in env:
-                env['VULNSCOUT_IMAGE'] = DEFAULT_VULNSCOUT_IMAGE
+            self._set_vulnscout_image_env(env, args)
             try:
                 subprocess.run(stop_cmd, env=env, check=True)
             except FileNotFoundError:
@@ -502,15 +527,23 @@ class ZephyrVulnScout(WestCommand):
             vulnscout_cmd = [
                 engine,
                 'exec',
+            ]
+            if args.serve:
+                vulnscout_cmd.extend([
+                    '-e',
+                    'FLASK_RUN_HOST=0.0.0.0',
+                    '-e',
+                    'FLASK_RUN_PORT=7275',
+                ])
+            vulnscout_cmd.extend([
                 args.container_name,
                 '/scan/src/entrypoint.sh',
-            ] + vulnscout_args
+            ])
+            vulnscout_cmd.extend(vulnscout_args)
 
         env = os.environ.copy()
-        if args.vulnscout_cmd and args.vulnscout_image:
-            env['VULNSCOUT_IMAGE'] = args.vulnscout_image
-        elif args.vulnscout_cmd and 'VULNSCOUT_IMAGE' not in env:
-            env['VULNSCOUT_IMAGE'] = DEFAULT_VULNSCOUT_IMAGE
+        if args.vulnscout_cmd:
+            self._set_vulnscout_image_env(env, args)
 
         pretty_files = ', '.join(pathlib.Path(f).name for f in spdx_files)
         self.inf(f'Importing SPDX files into VulnScout: {pretty_files}')

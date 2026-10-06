@@ -95,6 +95,9 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --serve --dev
 ```
 
+`--vulnscout-image` is interpreted as `repo[:tag]`. If the tag is omitted,
+the command uses `VULNSCOUT_VERSION` (or `VULNSCOT_VERSION`).
+
 ## License
 
 Copyright (C) 2025-2026 Savoir-faire Linux, Inc.
