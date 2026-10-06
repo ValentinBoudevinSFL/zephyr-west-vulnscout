@@ -51,6 +51,9 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --serve
 ```
 
+In direct container mode, pressing Ctrl+C while `--serve` is running stops the
+VulnScout container before exiting.
+
 If SPDX files already exist and you only want to import them:
 
 ```sh
@@ -70,7 +73,6 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --no-generate \
   --project default \
   --variant zephyr_demo \
-  --serve \
   --stop-after-run
 ```
 

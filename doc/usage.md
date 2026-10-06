@@ -29,7 +29,6 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --no-generate \
   --project default \
   --variant zephyr_demo \
-  --serve \
   --stop-after-run
 ```
 

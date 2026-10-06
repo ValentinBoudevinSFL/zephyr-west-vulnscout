@@ -9,6 +9,7 @@ import pathlib
 import shutil
 import subprocess
 import textwrap
+import time
 
 from west.commands import WestCommand
 from west.util import quote_sh_list
@@ -130,7 +131,8 @@ class ZephyrVulnScout(WestCommand):
         parser.add_argument(
             '--vulnscout-image',
             help=(
-                'value exported as VULNSCOUT_IMAGE when using --vulnscout-cmd '
+                'container image override for direct mode startup and value '
+                'exported as VULNSCOUT_IMAGE in wrapper mode '
                 f'(default: {DEFAULT_VULNSCOUT_IMAGE})'
             ),
         )
@@ -184,6 +186,13 @@ class ZephyrVulnScout(WestCommand):
         if not os.path.isdir(build_dir):
             self.die(f'Build directory does not exist: {build_dir}')
 
+        if args.serve and args.stop_after_run:
+            self.die(
+                '--stop-after-run cannot be used with --serve. '
+                '--serve keeps VulnScout attached to the terminal. '
+                'Use --serve without --stop-after-run, or run without --serve for one-shot scans.'
+            )
+
         if not args.no_generate:
             self._run_west_spdx(args, build_dir, spdx_dir)
 
@@ -194,7 +203,14 @@ class ZephyrVulnScout(WestCommand):
                 f'Expected *.jsonld, *.spdx.json, or *.spdx files.'
             )
 
-        self._run_vulnscout(args, spdx_files)
+        try:
+            self._run_vulnscout(args, spdx_files)
+        except KeyboardInterrupt:
+            if args.serve and not args.vulnscout_cmd:
+                self.wrn('Interrupted by user; stopping VulnScout container')
+                self._stop_vulnscout_container(args, best_effort=True)
+                return
+            raise
 
         if args.stop_after_run:
             self._stop_vulnscout_container(args)
@@ -226,10 +242,78 @@ class ZephyrVulnScout(WestCommand):
                 f'Start VulnScout first or pass --vulnscout-cmd to use the wrapper script.'
             )
 
+    def _is_container_running(self, engine, container_name):
+        ps_cmd = [engine, 'ps', '--format', '{{.Names}}']
+        try:
+            output = subprocess.run(ps_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            self.die(f'Failed to query running containers with {engine}: exit code {e.returncode}')
+        return container_name in output.stdout.splitlines()
+
+    def _is_container_present(self, engine, container_name):
+        ps_cmd = [engine, 'ps', '-a', '--format', '{{.Names}}']
+        try:
+            output = subprocess.run(ps_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            self.die(f'Failed to query containers with {engine}: exit code {e.returncode}')
+        return container_name in output.stdout.splitlines()
+
+    def _wait_for_container_ready(self, engine, container_name, retries=10):
+        for _ in range(retries):
+            probe = [engine, 'exec', container_name, 'true']
+            if subprocess.run(probe, capture_output=True).returncode == 0:
+                return
+            time.sleep(1)
+        self.die(
+            f'Container "{container_name}" did not become ready. '
+            f'Check logs with: {engine} logs {container_name}'
+        )
+
+    def _resolve_vulnscout_image(self, args):
+        if args.vulnscout_image:
+            return args.vulnscout_image
+        return os.environ.get('VULNSCOUT_IMAGE', DEFAULT_VULNSCOUT_IMAGE)
+
+    def _ensure_container_running(self, engine, container_name, args):
+        if self._is_container_running(engine, container_name):
+            return
+
+        if self._is_container_present(engine, container_name):
+            start_cmd = [engine, 'start', container_name]
+            self.inf(f'Starting existing VulnScout container: {quote_sh_list(start_cmd)}')
+            try:
+                subprocess.run(start_cmd, check=True)
+            except subprocess.CalledProcessError as e:
+                self.die(f'Failed to start container "{container_name}": exit code {e.returncode}')
+            self._wait_for_container_ready(engine, container_name)
+            return
+
+        image = self._resolve_vulnscout_image(args)
+        run_cmd = [
+            engine,
+            'run',
+            '-d',
+            '--name',
+            container_name,
+            '-p',
+            '7275:7275',
+            image,
+            'daemon',
+        ]
+        self.inf(f'Starting VulnScout container: {quote_sh_list(run_cmd)}')
+        try:
+            subprocess.run(run_cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            self.die(f'Failed to run VulnScout container from image {image}: exit code {e.returncode}')
+        self._wait_for_container_ready(engine, container_name)
+
     def _stage_spdx_files(self, engine, container_name, spdx_files):
         staged = []
         for idx, spdx_file in enumerate(spdx_files, start=1):
-            basename = pathlib.Path(spdx_file).name
+            src_path = pathlib.Path(spdx_file)
+            basename = src_path.name
+            if src_path.suffix.lower() == '.jsonld':
+                basename = f'{src_path.stem}.spdx.json'
             staged_path = f'/tmp/vulnscout_stage_{idx}_{basename}'
             cp_cmd = [engine, 'cp', spdx_file, f'{container_name}:{staged_path}']
             self.dbg(f'Staging SPDX file into container: {quote_sh_list(cp_cmd)}')
@@ -240,7 +324,22 @@ class ZephyrVulnScout(WestCommand):
             staged.append(staged_path)
         return staged
 
-    def _stop_vulnscout_container(self, args):
+    def _cleanup_staged_inputs(self, engine, container_name):
+        cleanup_cmd = [
+            engine,
+            'exec',
+            container_name,
+            'sh',
+            '-c',
+            'rm -f /scan/inputs/spdx/vulnscout_stage_* /tmp/vulnscout_stage_*',
+        ]
+        result = subprocess.run(cleanup_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            stderr = (result.stderr or '').strip()
+            if stderr:
+                self.wrn(f'Could not clean staged VulnScout inputs: {stderr}')
+
+    def _stop_vulnscout_container(self, args, best_effort=False):
         if args.vulnscout_cmd:
             stop_cmd = [args.vulnscout_cmd, '--stop']
             self.inf(f'Stopping VulnScout container with wrapper: {quote_sh_list(stop_cmd)}')
@@ -252,11 +351,17 @@ class ZephyrVulnScout(WestCommand):
             try:
                 subprocess.run(stop_cmd, env=env, check=True)
             except FileNotFoundError:
+                if best_effort:
+                    self.wrn(f'Could not find VulnScout command while stopping: {args.vulnscout_cmd}')
+                    return
                 self.die(
                     f'Could not find VulnScout command: {args.vulnscout_cmd}. '
                     f'Use --vulnscout-cmd with an absolute path, or use direct exec mode.'
                 )
             except subprocess.CalledProcessError as e:
+                if best_effort:
+                    self.wrn(f'Failed to stop VulnScout container (wrapper): exit code {e.returncode}')
+                    return
                 self.die(f'Failed to stop VulnScout container: exit code {e.returncode}')
             return
 
@@ -271,6 +376,9 @@ class ZephyrVulnScout(WestCommand):
         details = stderr or stdout
         if 'No such container' in details:
             self.wrn(f'Container "{args.container_name}" is not running')
+            return
+        if best_effort:
+            self.wrn(f'Failed to stop container "{args.container_name}": {details}')
             return
         self.die(f'Failed to stop container "{args.container_name}": {details}')
 
@@ -373,7 +481,8 @@ class ZephyrVulnScout(WestCommand):
                 vulnscout_args.extend(['--add-spdx', spdx_file])
         else:
             engine = self._resolve_container_engine(args.container_engine)
-            self._assert_container_running(engine, args.container_name)
+            self._ensure_container_running(engine, args.container_name, args)
+            self._cleanup_staged_inputs(engine, args.container_name)
             staged_files = self._stage_spdx_files(engine, args.container_name, spdx_files)
             for spdx_file in staged_files:
                 vulnscout_args.extend(['--add-spdx', spdx_file])
@@ -402,8 +511,6 @@ class ZephyrVulnScout(WestCommand):
             env['VULNSCOUT_IMAGE'] = args.vulnscout_image
         elif args.vulnscout_cmd and 'VULNSCOUT_IMAGE' not in env:
             env['VULNSCOUT_IMAGE'] = DEFAULT_VULNSCOUT_IMAGE
-        elif args.vulnscout_image:
-            self.wrn('--vulnscout-image is ignored in direct container exec mode')
 
         pretty_files = ', '.join(pathlib.Path(f).name for f in spdx_files)
         self.inf(f'Importing SPDX files into VulnScout: {pretty_files}')
