@@ -58,13 +58,16 @@ class ZephyrVulnScout(WestCommand):
                 # Skip SPDX generation and import an existing SPDX output directory:
                 west vulnscout -d build --no-generate --spdx-dir build/spdx
 
+                # Stop the VulnScout container and exit:
+                west vulnscout --stop
+
                 # Request SPDX 3.1 explicitly (requires spdx-python-model v3_1):
                 west vulnscout -d build --spdx-version 3.1
             """
             ),
         )
 
-        parser.add_argument('-d', '--build-dir', required=True, help='Zephyr build directory')
+        parser.add_argument('-d', '--build-dir', help='Zephyr build directory')
         parser.add_argument(
             '--spdx-dir',
             help='SPDX output directory (default: <build-dir>/spdx)',
@@ -93,6 +96,16 @@ class ZephyrVulnScout(WestCommand):
             '--no-generate',
             action='store_true',
             help='skip west spdx generation and reuse files from --spdx-dir',
+        )
+        parser.add_argument(
+            '--stop',
+            action='store_true',
+            help='stop VulnScout container and exit',
+        )
+        parser.add_argument(
+            '--stop-after-run',
+            action='store_true',
+            help='stop VulnScout container after a successful run',
         )
         parser.add_argument(
             '--spdx-file',
@@ -158,6 +171,13 @@ class ZephyrVulnScout(WestCommand):
         if unknown_args:
             self.die(f'Unexpected arguments: {unknown_args}')
 
+        if args.stop:
+            self._stop_vulnscout_container(args)
+            return
+
+        if not args.build_dir:
+            self.die('Build directory not specified; call `west vulnscout --build-dir=BUILD_DIR`')
+
         build_dir = os.path.abspath(args.build_dir)
         spdx_dir = os.path.abspath(args.spdx_dir or os.path.join(build_dir, 'spdx'))
 
@@ -175,6 +195,9 @@ class ZephyrVulnScout(WestCommand):
             )
 
         self._run_vulnscout(args, spdx_files)
+
+        if args.stop_after_run:
+            self._stop_vulnscout_container(args)
 
     def _resolve_container_engine(self, preferred):
         if preferred in ('docker', 'podman'):
@@ -216,6 +239,40 @@ class ZephyrVulnScout(WestCommand):
                 self.die(f'Failed to stage SPDX file {spdx_file}: exit code {e.returncode}')
             staged.append(staged_path)
         return staged
+
+    def _stop_vulnscout_container(self, args):
+        if args.vulnscout_cmd:
+            stop_cmd = [args.vulnscout_cmd, '--stop']
+            self.inf(f'Stopping VulnScout container with wrapper: {quote_sh_list(stop_cmd)}')
+            env = os.environ.copy()
+            if args.vulnscout_image:
+                env['VULNSCOUT_IMAGE'] = args.vulnscout_image
+            elif 'VULNSCOUT_IMAGE' not in env:
+                env['VULNSCOUT_IMAGE'] = DEFAULT_VULNSCOUT_IMAGE
+            try:
+                subprocess.run(stop_cmd, env=env, check=True)
+            except FileNotFoundError:
+                self.die(
+                    f'Could not find VulnScout command: {args.vulnscout_cmd}. '
+                    f'Use --vulnscout-cmd with an absolute path, or use direct exec mode.'
+                )
+            except subprocess.CalledProcessError as e:
+                self.die(f'Failed to stop VulnScout container: exit code {e.returncode}')
+            return
+
+        engine = self._resolve_container_engine(args.container_engine)
+        rm_cmd = [engine, 'rm', '-f', args.container_name]
+        self.inf(f'Stopping VulnScout container: {quote_sh_list(rm_cmd)}')
+        result = subprocess.run(rm_cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            return
+        stderr = (result.stderr or '').strip()
+        stdout = (result.stdout or '').strip()
+        details = stderr or stdout
+        if 'No such container' in details:
+            self.wrn(f'Container "{args.container_name}" is not running')
+            return
+        self.die(f'Failed to stop container "{args.container_name}": {details}')
 
     def _run_west_spdx(self, args, build_dir, spdx_dir):
         requested_version = args.spdx_version

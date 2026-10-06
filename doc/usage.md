@@ -21,6 +21,24 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
   --serve
 ```
 
+Stop the VulnScout container cleanly after task completion:
+
+```sh
+ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
+  -d demo/mbedtls_sbom/build \
+  --no-generate \
+  --project default \
+  --variant zephyr_demo \
+  --serve \
+  --stop-after-run
+```
+
+Stop the container immediately:
+
+```sh
+west vulnscout --stop
+```
+
 Optional wrapper mode (instead of direct container exec):
 
 ```sh
