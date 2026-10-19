@@ -22,7 +22,7 @@ vulnscout = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(vulnscout)
 
 
-class StopCommandTests(unittest.TestCase):
+class VulnScoutCommandTests(unittest.TestCase):
     def setUp(self):
         self.command = vulnscout.ZephyrVulnScout()
         info = patch.object(self.command, 'inf')
@@ -76,6 +76,53 @@ class StopCommandTests(unittest.TestCase):
     def test_unknown_action_is_rejected(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             self.parse('restart')
+
+    def test_scan_flags_in_container_and_wrapper_modes(self):
+        for wrapper in [False, True]:
+            for perform_scan in [False, True]:
+                for serve in [False, True]:
+                    with self.subTest(wrapper=wrapper, perform_scan=perform_scan, serve=serve):
+                        options = ['--project', 'demo', '--variant', 'native']
+                        if wrapper:
+                            options.extend(['--vulnscout-cmd', '/demo/vulnscout'])
+                        if perform_scan:
+                            options.append('--perform-scan')
+                        if serve:
+                            options.append('--serve')
+                        args = self.parse(*options)
+                        with (
+                            patch.object(self.command, '_resolve_container_engine',
+                                         return_value='podman'),
+                            patch.object(self.command, '_ensure_container_running'),
+                            patch.object(self.command, '_cleanup_staged_inputs'),
+                            patch.object(self.command, '_stage_spdx_files',
+                                         return_value=['/tmp/app.spdx.json']),
+                            patch.object(vulnscout.subprocess, 'run') as run,
+                        ):
+                            self.command._run_vulnscout(args, ['/demo/app.jsonld'], '/cache')
+                        if wrapper:
+                            expected = ['/demo/vulnscout']
+                            spdx_file = '/demo/app.jsonld'
+                        else:
+                            expected = ['podman', 'exec']
+                            if serve:
+                                expected.extend([
+                                    '-e', 'FLASK_RUN_HOST=0.0.0.0',
+                                    '-e', 'FLASK_RUN_PORT=7275',
+                                ])
+                            expected.extend(['vulnscout', '/scan/src/entrypoint.sh'])
+                            spdx_file = '/tmp/app.spdx.json'
+                        expected.extend([
+                            '--project', 'demo', '--variant', 'native',
+                            '--add-spdx', spdx_file,
+                        ])
+                        if perform_scan:
+                            expected.extend(['--perform-scans', 'all'])
+                        if serve:
+                            expected.append('--serve')
+                        run.assert_called_once()
+                        self.assertEqual(run.call_args.args[0], expected)
+                        self.assertTrue(run.call_args.kwargs['check'])
 
     def test_default_action_still_generates_and_imports(self):
         with tempfile.TemporaryDirectory() as build_dir:

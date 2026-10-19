@@ -163,6 +163,11 @@ class ZephyrVulnScout(WestCommand):
             ),
         )
         parser.add_argument(
+            '--perform-scan',
+            action='store_true',
+            help='run all VulnScout scanners after import (passes --perform-scans all)',
+        )
+        parser.add_argument(
             '--serve',
             action='store_true',
             help='pass --serve to VulnScout',
@@ -575,6 +580,8 @@ class ZephyrVulnScout(WestCommand):
             for spdx_file in staged_files:
                 vulnscout_args.extend(['--add-spdx', spdx_file])
 
+        if args.perform_scan:
+            vulnscout_args.extend(['--perform-scans', 'all'])
         if args.refresh_vulnerability_data:
             vulnscout_args.append('--refresh-vulnerability-data')
         if args.match_condition:
