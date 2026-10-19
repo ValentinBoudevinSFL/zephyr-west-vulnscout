@@ -54,6 +54,25 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
 In direct container mode, pressing Ctrl+C while `--serve` is running stops the
 VulnScout container before exiting.
 
+To generate the SBOM, run all vulnerability scanners, and serve the web
+interface:
+
+```sh
+ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
+  -d demo/mbedtls_sbom/build \
+  --container-engine podman \
+  --project zephyr_demo \
+  --variant mbedtls_native_sim \
+  --perform-scan --serve
+```
+
+Build the application with `CONFIG_BUILD_OUTPUT_META=y` first. Open
+http://localhost:7275/ to follow scanning progress. `--perform-scan` passes
+`--perform-scans all` to VulnScout in both direct container and wrapper modes.
+Without this flag, the command imports the SBOM without requesting a full
+scan. Full scans may require network access and scanner credentials.
+Do not start a second web server if one is already running in the container.
+
 In direct mode, VulnScout data is persisted on the host by mounting
 `<build-dir>/../.vulnscout/cache` to `/cache/vulnscout` in the container. For
 example with `-d demo/mbedtls_sbom/build`, the database is stored at
