@@ -106,7 +106,8 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
 ```
 
 `--vulnscout-image` is interpreted as `repo[:tag]`. If the tag is omitted,
-the command uses `VULNSCOUT_VERSION` (or `VULNSCOT_VERSION`).
+the command uses `VULNSCOUT_VERSION` (or `VULNSCOT_VERSION`), defaulting to
+`v0.23`. The default image is `docker.io/sflinux/vulnscout:v0.23`.
 
 Use `--vulnscout-data-dir /path/to/data` to override the default data location.
 
