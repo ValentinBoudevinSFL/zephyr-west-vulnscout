@@ -84,8 +84,13 @@ ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
 To stop the container immediately:
 
 ```sh
-west vulnscout --stop
+west vulnscout stop
 ```
+
+The existing `west vulnscout --stop` syntax remains supported. Both forms
+accept `--container-engine`, `--container-name`, and `--vulnscout-cmd`;
+neither requires a build directory. Stopping removes the container, but
+preserves its host-mounted data.
 
 If you prefer using the VulnScout wrapper script instead of direct container
 exec mode:

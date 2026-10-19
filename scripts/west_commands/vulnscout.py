@@ -62,7 +62,7 @@ class ZephyrVulnScout(WestCommand):
                 west vulnscout -d build --no-generate --spdx-dir build/spdx
 
                 # Stop the VulnScout container and exit:
-                west vulnscout --stop
+                west vulnscout stop
 
                 # Request SPDX 3.1 explicitly (requires spdx-python-model v3_1):
                 west vulnscout -d build --spdx-version 3.1
@@ -70,6 +70,12 @@ class ZephyrVulnScout(WestCommand):
             ),
         )
 
+        parser.add_argument(
+            'action',
+            nargs='?',
+            choices=['stop'],
+            help='stop the VulnScout container and exit (alias for --stop)',
+        )
         parser.add_argument('-d', '--build-dir', help='Zephyr build directory')
         parser.add_argument(
             '--spdx-dir',
@@ -182,7 +188,7 @@ class ZephyrVulnScout(WestCommand):
         if unknown_args:
             self.die(f'Unexpected arguments: {unknown_args}')
 
-        if args.stop:
+        if args.action == 'stop' or args.stop:
             self._stop_vulnscout_container(args)
             return
 
