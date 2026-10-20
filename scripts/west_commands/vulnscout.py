@@ -180,7 +180,10 @@ class ZephyrVulnScout(WestCommand):
         parser.add_argument(
             '--refresh-vulnerability-data',
             action='store_true',
-            help='pass --refresh-vulnerability-data to VulnScout',
+            help=(
+                'refresh stored vulnerability data without importing SBOMs '
+                '(unless --perform-scan is also set)'
+            ),
         )
         parser.add_argument(
             '--match-condition',
@@ -213,15 +216,18 @@ class ZephyrVulnScout(WestCommand):
                 'Use --serve without --stop-after-run, or run without --serve for one-shot scans.'
             )
 
-        if not args.no_generate:
-            self._run_west_spdx(args, build_dir, spdx_dir)
+        refresh_only = args.refresh_vulnerability_data and not args.perform_scan
+        spdx_files = []
+        if not refresh_only:
+            if not args.no_generate:
+                self._run_west_spdx(args, build_dir, spdx_dir)
 
-        spdx_files = self._resolve_spdx_files(args.spdx_file, spdx_dir)
-        if not spdx_files:
-            self.die(
-                f'No SPDX files found to import in {spdx_dir}. '
-                f'Expected *.jsonld, *.spdx.json, or *.spdx files.'
-            )
+            spdx_files = self._resolve_spdx_files(args.spdx_file, spdx_dir)
+            if not spdx_files:
+                self.die(
+                    f'No SPDX files found to import in {spdx_dir}. '
+                    f'Expected *.jsonld, *.spdx.json, or *.spdx files.'
+                )
 
         data_dir = self._resolve_vulnscout_data_dir(args, build_dir)
 
@@ -575,10 +581,11 @@ class ZephyrVulnScout(WestCommand):
         else:
             engine = self._resolve_container_engine(args.container_engine)
             self._ensure_container_running(engine, args.container_name, args, data_dir)
-            self._cleanup_staged_inputs(engine, args.container_name)
-            staged_files = self._stage_spdx_files(engine, args.container_name, spdx_files)
-            for spdx_file in staged_files:
-                vulnscout_args.extend(['--add-spdx', spdx_file])
+            if spdx_files:
+                self._cleanup_staged_inputs(engine, args.container_name)
+                staged_files = self._stage_spdx_files(engine, args.container_name, spdx_files)
+                for spdx_file in staged_files:
+                    vulnscout_args.extend(['--add-spdx', spdx_file])
 
         if args.perform_scan:
             vulnscout_args.extend(['--perform-scans', 'all'])
@@ -615,8 +622,14 @@ class ZephyrVulnScout(WestCommand):
         if args.vulnscout_cmd:
             self._set_vulnscout_image_env(env, args)
 
-        pretty_files = ', '.join(pathlib.Path(f).name for f in spdx_files)
-        self.inf(f'Importing SPDX files into VulnScout: {pretty_files}')
+        if spdx_files:
+            pretty_files = ', '.join(pathlib.Path(f).name for f in spdx_files)
+            self.inf(f'Importing SPDX files into VulnScout: {pretty_files}')
+        else:
+            self.inf(
+                f'Refreshing stored vulnerability data for '
+                f'project "{args.project}", variant "{args.variant}"'
+            )
         self.inf(f'Running VulnScout command: {quote_sh_list(vulnscout_cmd)}')
         try:
             subprocess.run(vulnscout_cmd, env=env, check=True)

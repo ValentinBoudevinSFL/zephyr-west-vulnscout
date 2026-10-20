@@ -143,6 +143,72 @@ class VulnScoutCommandTests(unittest.TestCase):
                 args, files, self.command._resolve_vulnscout_data_dir(args, build_dir)
             )
 
+    def test_refresh_only_skips_generation_and_import(self):
+        for wrapper in [False, True]:
+            for serve in [False, True]:
+                with self.subTest(wrapper=wrapper, serve=serve), tempfile.TemporaryDirectory() as build_dir:
+                    options = [
+                        '-d', build_dir, '--project', 'demo', '--variant', 'native',
+                        '--refresh-vulnerability-data',
+                    ]
+                    if wrapper:
+                        options.extend(['--vulnscout-cmd', '/demo/vulnscout'])
+                    if serve:
+                        options.append('--serve')
+                    args = self.parse(*options)
+                    with (
+                        patch.object(self.command, '_run_west_spdx') as generate,
+                        patch.object(self.command, '_resolve_spdx_files') as resolve,
+                        patch.object(self.command, '_resolve_container_engine',
+                                     return_value='podman'),
+                        patch.object(self.command, '_ensure_container_running'),
+                        patch.object(self.command, '_cleanup_staged_inputs') as cleanup,
+                        patch.object(self.command, '_stage_spdx_files') as stage,
+                        patch.object(vulnscout.subprocess, 'run') as run,
+                    ):
+                        self.command.do_run(args, [])
+                    generate.assert_not_called()
+                    resolve.assert_not_called()
+                    cleanup.assert_not_called()
+                    stage.assert_not_called()
+                    expected = ['/demo/vulnscout'] if wrapper else ['podman', 'exec']
+                    if not wrapper:
+                        if serve:
+                            expected.extend([
+                                '-e', 'FLASK_RUN_HOST=0.0.0.0',
+                                '-e', 'FLASK_RUN_PORT=7275',
+                            ])
+                        expected.extend(['vulnscout', '/scan/src/entrypoint.sh'])
+                    expected.extend([
+                        '--project', 'demo', '--variant', 'native',
+                        '--refresh-vulnerability-data',
+                    ])
+                    if serve:
+                        expected.append('--serve')
+                    run.assert_called_once()
+                    self.assertEqual(run.call_args.args[0], expected)
+
+    def test_scan_with_refresh_still_generates_and_imports(self):
+        with tempfile.TemporaryDirectory() as build_dir:
+            args = self.parse(
+                '-d', build_dir, '--perform-scan', '--refresh-vulnerability-data',
+                '--vulnscout-cmd', '/demo/vulnscout',
+            )
+            files = [str(pathlib.Path(build_dir) / 'spdx' / 'app.jsonld')]
+            with (
+                patch.object(self.command, '_run_west_spdx') as generate,
+                patch.object(self.command, '_resolve_spdx_files', return_value=files),
+                patch.object(vulnscout.subprocess, 'run') as run,
+            ):
+                self.command.do_run(args, [])
+            generate.assert_called_once()
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], [
+                '/demo/vulnscout', '--project', 'default', '--variant', 'default',
+                '--add-spdx', files[0], '--perform-scans', 'all',
+                '--refresh-vulnerability-data',
+            ])
+
 
 if __name__ == '__main__':
     unittest.main()
