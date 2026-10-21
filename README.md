@@ -45,6 +45,11 @@ west update zephyr-west-vulnscout
 west help vulnscout
 ```
 
+The help groups options by feature and includes examples for imports, scanning,
+refresh, reports, exports, policy checks, and container lifecycle. With no
+action, the command generates and imports an SBOM; scanning requires
+`--perform-scan`. The `report` and `export` actions use stored data instead.
+
 ## Example usage
 
 From your Zephyr workspace root:
