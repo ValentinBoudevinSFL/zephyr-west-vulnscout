@@ -12,6 +12,7 @@ from .process import VulnScoutError
 
 
 INTERFACE_LABEL = 'io.vulnscout.interface'
+VERSION_LABEL = 'org.opencontainers.image.version'
 CACHE_DIR = '/cache/vulnscout'
 
 
@@ -21,6 +22,36 @@ class BackendInterface:
     cli: tuple[str, ...]
     python: tuple[str, ...]
     workdir: str
+
+
+V023_INTERFACE = BackendInterface(
+    entrypoint=('/scan/src/entrypoint.sh',),
+    cli=('flask', '--app', 'src.bin.webapp'),
+    python=('python3',),
+    workdir='/scan',
+)
+
+
+def resolve_interface(payload: str) -> BackendInterface:
+    message = (
+        'Unsupported VulnScout image metadata: use an image labeled '
+        f'{VERSION_LABEL}=v0.23 or declaring {INTERFACE_LABEL} version 1. '
+        'Image tags alone do not establish compatibility.'
+    )
+    try:
+        labels = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise VulnScoutError(message) from error
+    if not isinstance(labels, dict):
+        raise VulnScoutError(message)
+    if INTERFACE_LABEL in labels:
+        declaration = labels[INTERFACE_LABEL]
+        if not isinstance(declaration, str):
+            raise VulnScoutError(f'Invalid {INTERFACE_LABEL} declaration: expected a JSON string.')
+        return parse_interface(declaration)
+    if labels.get(VERSION_LABEL) == 'v0.23':
+        return V023_INTERFACE
+    raise VulnScoutError(message)
 
 
 def parse_interface(payload: str) -> BackendInterface:

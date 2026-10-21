@@ -1223,16 +1223,78 @@ class BackendInterfaceTests(unittest.TestCase):
     def test_contract_is_read_once_from_metadata_without_source_probing(self):
         instance = self.container()
         with patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess(
-            [], 0, json.dumps(INTERFACE_DATA), '',
+            [], 0, json.dumps({backend.INTERFACE_LABEL: json.dumps(INTERFACE_DATA)}), '',
         )) as run:
             self.assertEqual(instance.check_processing_support(), INTERFACE)
             self.assertIs(instance.check_processing_support(), instance.check_processing_support())
             run.assert_called_once()
             self.assertEqual(run.call_args.args[0], [
                 'podman', 'inspect', '--format',
-                '{{index .Config.Labels "io.vulnscout.interface"}}', 'isolated',
+                '{{json .Config.Labels}}', 'isolated',
             ])
             self.assertEqual(run.call_args.kwargs['timeout'], 30)
+
+    def test_unlabeled_v023_uses_explicit_version_adapter(self):
+        self.assertEqual(
+            backend.resolve_interface(json.dumps({backend.VERSION_LABEL: 'v0.23'})),
+            backend.BackendInterface(
+                entrypoint=('/scan/src/entrypoint.sh',),
+                cli=('flask', '--app', 'src.bin.webapp'),
+                python=('python3',), workdir='/scan',
+            ),
+        )
+
+    def test_unknown_or_invalid_metadata_is_not_guessed_from_tags(self):
+        payloads = ['', 'null', '[]', '{}', 'not JSON']
+        payloads.extend(json.dumps({backend.VERSION_LABEL: version}) for version in (
+            'v0.22', 'v0.24', 'latest', '0.23', '', None, ['v0.23'],
+        ))
+        for payload in payloads:
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                process.VulnScoutError, 'Image tags alone',
+            ):
+                backend.resolve_interface(payload)
+
+    def test_invalid_declaration_never_falls_back_to_v023_adapter(self):
+        for declaration in ('', '{}', 'null', 'invalid JSON', None, False, INTERFACE_DATA,
+                            json.dumps({**INTERFACE_DATA, 'version': 2}),
+                            json.dumps({**INTERFACE_DATA, 'features': []})):
+            with self.subTest(declaration=declaration), self.assertRaises(process.VulnScoutError):
+                backend.resolve_interface(json.dumps({
+                    backend.VERSION_LABEL: 'v0.23', backend.INTERFACE_LABEL: declaration,
+                }))
+
+    def test_valid_declaration_takes_precedence_over_version_adapter(self):
+        declaration = {**INTERFACE_DATA, 'workdir': '/opt/service'}
+        for version in ('v0.23', 'v0.24', None):
+            with self.subTest(version=version):
+                self.assertEqual(backend.resolve_interface(json.dumps({
+                    backend.VERSION_LABEL: version,
+                    backend.INTERFACE_LABEL: json.dumps(declaration),
+                })), backend.parse_interface(json.dumps(declaration)))
+
+    def test_v023_adapter_is_selected_before_starting_stopped_container(self):
+        instance = self.container()
+        success = subprocess.CompletedProcess([], 0, '', '')
+        metadata = subprocess.CompletedProcess(
+            [], 0, json.dumps({backend.VERSION_LABEL: 'v0.23'}), '',
+        )
+        with (
+            patch.object(instance, 'state', return_value='exited'),
+            patch.object(instance, 'data_mount', return_value='/host/cache'),
+            patch.object(instance, 'wait_ready') as ready,
+            patch.object(instance, 'info') as info,
+            patch.object(subprocess, 'run', side_effect=[metadata, success]) as run,
+        ):
+            instance.ensure_running('/host/cache', 'ignored:image', '0.0.0.0', '7275')
+            self.assertEqual(run.call_args_list[0].args[0], [
+                'podman', 'inspect', '--format', '{{json .Config.Labels}}', 'isolated',
+            ])
+            self.assertEqual(run.call_args_list[1].args[0], ['podman', 'start', 'isolated'])
+            self.assertIs(instance.check_processing_support(), backend.V023_INTERFACE)
+            self.assertEqual(run.call_count, 2)
+            info.assert_any_call('Using the built-in VulnScout v0.23 compatibility adapter')
+            ready.assert_called_once()
 
     def test_discovered_commands_and_workdir_are_used_without_scan_paths(self):
         interface = backend.parse_interface(json.dumps({

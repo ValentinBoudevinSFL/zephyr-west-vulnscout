@@ -15,7 +15,7 @@ import textwrap
 import time
 import uuid
 
-from .backend import CACHE_DIR, INTERFACE_LABEL, BackendInterface, parse_interface
+from .backend import CACHE_DIR, V023_INTERFACE, BackendInterface, resolve_interface
 from .process import DEFAULT_OPERATION_TIMEOUT, MANAGEMENT_TIMEOUT, VulnScoutError, run_command
 
 
@@ -218,9 +218,11 @@ class Container:
         if self._interface is None:
             result = run_command([
                 self.engine, 'inspect', '--format',
-                f'{{{{index .Config.Labels "{INTERFACE_LABEL}"}}}}', self.name,
+                '{{json .Config.Labels}}', self.name,
             ], 'Reading VulnScout interface contract', capture_output=True)
-            self._interface = parse_interface(result.stdout.strip())
+            self._interface = resolve_interface(result.stdout.strip())
+            if self._interface is V023_INTERFACE:
+                self.info('Using the built-in VulnScout v0.23 compatibility adapter')
         return self._interface
 
     def run_processing(

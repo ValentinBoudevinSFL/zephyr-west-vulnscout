@@ -51,24 +51,32 @@ This also coordinates participating containers mounting the same host cache.
 The lock file may remain after processing; its presence does not mean the lock
 is held. Do not delete it to clear a busy error.
 
-The image must declare version 1 of the `io.vulnscout.interface` OCI label,
-including `isolated-inputs` and `python-fcntl` capabilities. West validates this
-machine-readable contract before staging files or starting a stopped container.
-It uses the declared entrypoint, CLI, Python interpreter, and working directory;
-it does not inspect source code or assume application paths inside the image.
-The contract's public cache mount remains `/cache/vulnscout`.
+Published v0.23 images work without rebuilding VulnScout or changing its backend.
+When no `io.vulnscout.interface` label exists, West selects its built-in v0.23
+adapter only if `org.opencontainers.image.version` is exactly `v0.23`.
+The adapter centralizes that release's standard entrypoint, CLI prefix, Python
+interpreter, and `/scan` working directory. This is an explicit version dependency,
+not source-code probing or a guess based on an image tag.
+
+Images can optionally declare version 1 of the `io.vulnscout.interface` OCI label,
+including `isolated-inputs` and `python-fcntl` capabilities. A valid declaration
+takes precedence over the adapter and supplies the commands and working directory
+for relocated or newer images. Both modes use `/cache/vulnscout` as the public
+persistent-cache mount. Processing requires isolated-input support and Python's
+POSIX locking and process-group facilities; execution errors are reported normally.
 
 Inspect the declaration with:
 
 ```sh
-podman inspect vulnscout --format '{{index .Config.Labels "io.vulnscout.interface"}}'
+podman inspect vulnscout --format '{{json .Config.Labels}}'
 ```
 
-**Compatibility change:** images without the label, including previously
-published v0.23 images, must be rebuilt or upgraded. The VulnScout Dockerfile now
-publishes the contract. Recreate the container from a compatible image while
-preserving its host cache; merely restarting an older container cannot add
-image metadata. There is no source-probing or legacy-path fallback.
+West validates this metadata before staging files or starting a stopped
+container. Unknown versions without a declaration are rejected. A present but
+malformed or unsupported declaration is also rejected, even if the version label
+is `v0.23`; it never silently falls back to the adapter. Custom images that change
+the v0.23 layout must declare their actual interface rather than relying on the
+standard adapter. Existing standard v0.23 containers need no recreation.
 
 Direct-mode `--serve` starts the UI after processing and releasing the lock,
 so later West imports can run while the interface remains open. These guarantees
