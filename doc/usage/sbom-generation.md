@@ -2,12 +2,12 @@
 
 ## Generate and import an SBOM
 
-Build the application with `CONFIG_BUILD_OUTPUT_META=y` first, then run:
+Build the application with `CONFIG_BUILD_OUTPUT_META=y` first, then run from
+your Zephyr workspace root:
 
 ```sh
 ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
-  -d demo/mbedtls_sbom/build \
-  --project zephyr_demo --variant mbedtls_native_sim
+  -d demo/mbedtls_sbom/build
 ```
 
 By default, the command generates SPDX 3.0 SBOMs using `west spdx` and imports
@@ -19,6 +19,27 @@ the matching files from `<build-dir>/spdx`:
 
 Importing does not request a full vulnerability scan. See
 [Vulnerability Scanning](vulnerability-scanning.md) to run the scanners too.
+
+## Projects, variants, and cache
+
+Without `--project` and `--variant`, the command imports into `default/default`.
+It does not infer either name from the build directory. To organize this
+application's SBOM under a named project and variant, use the same command
+with explicit names:
+
+```sh
+ZEPHYR_BASE="$PWD/zephyr" west vulnscout \
+  -d demo/mbedtls_sbom/build \
+  --project zephyr_demo --variant mbedtls_native_sim
+```
+
+Keep the same project and variant when importing updated SBOMs, scanning,
+refreshing vulnerability data, or generating reports. The other feature guides
+use `zephyr_demo` and `mbedtls_native_sim` consistently.
+
+The build directory also selects the default persistent cache. When reusing
+an existing container, check its cache location as described in
+[Container Lifecycle and Configuration](container-configuration.md).
 
 ## Reuse existing SPDX files
 

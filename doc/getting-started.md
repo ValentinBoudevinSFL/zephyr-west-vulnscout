@@ -22,13 +22,5 @@ west update zephyr-west-vulnscout
 west help vulnscout
 ```
 
-## Projects, variants, and cache
-
-Run the feature guide examples from your Zephyr workspace root. Always pass
-the same `--project` and `--variant` when continuing a workflow. Omitting them
-selects `default/default`; the command does not infer them from the build
-directory. The guides use project `zephyr_demo` and variant `mbedtls_native_sim`.
-
-The build directory also selects the default persistent cache. When reusing
-an existing container, check its cache location as described in
-[Container Lifecycle and Configuration](usage/container-configuration.md).
+Continue with [SBOM Generation and Import](usage/sbom-generation.md) to generate
+your first SBOM and select its project and variant.
